@@ -1,0 +1,101 @@
+name: Build sentry-native 0.16.3 (windows + linux)
+
+on:
+  workflow_dispatch:
+
+env:
+  SENTRY_NATIVE_VERSION: "0.16.3"
+  QT_VERSION: "6.9.3"
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+
+      # Flags mirror polydex-app/scripts/build_sentry.bat:
+      # winhttp transport, no SENTRY_TRANSPORT_COMPRESSION (matches what ships today).
+      - name: Clone sentry-native
+        run: git clone --branch %SENTRY_NATIVE_VERSION% --depth 1 --recurse-submodules https://github.com/getsentry/sentry-native.git
+        shell: cmd
+
+      - name: Configure
+        run: >
+          cmake -S sentry-native -B sentry-native/build -G "Visual Studio 17 2022" -A x64
+          -D CMAKE_BUILD_TYPE=RelWithDebInfo
+          -D SENTRY_BACKEND=crashpad
+          -D SENTRY_INTEGRATION_QT=ON
+          -D SENTRY_TRANSPORT=winhttp
+          -D CRASHPAD_ENABLE_STACKTRACE=ON
+          -D CMAKE_PREFIX_PATH=%QT_ROOT_DIR%
+        shell: cmd
+
+      - name: Build
+        run: cmake --build sentry-native/build --config RelWithDebInfo --parallel
+        shell: cmd
+
+      # build_sentry.bat has no install step; installing here just collects the
+      # same binaries into one folder for the artifact.
+      - name: Install
+        run: cmake --install sentry-native/build --prefix sentry-native/install --config RelWithDebInfo
+        shell: cmd
+
+      - name: Verify version
+        run: findstr /C:"sentry.native/%SENTRY_NATIVE_VERSION%" sentry-native\install\bin\sentry.dll >nul && echo OK
+        shell: cmd
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sentry-native-windows
+          path: |
+            sentry-native/install/bin/sentry.dll
+            sentry-native/install/bin/crashpad_handler.exe
+            sentry-native/install/lib/sentry.lib
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev zlib1g-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+
+      # Flags mirror polydex-app/scripts/build_sentry.sh minus the macOS-only
+      # settings (OSX architectures, SDKROOT).
+      - name: Clone sentry-native
+        run: git clone --branch "$SENTRY_NATIVE_VERSION" --depth 1 --recurse-submodules https://github.com/getsentry/sentry-native.git
+
+      - name: Configure
+        run: >
+          cmake -S sentry-native -B sentry-native/build
+          -D CMAKE_BUILD_TYPE=RelWithDebInfo
+          -D SENTRY_BACKEND=crashpad
+          -D SENTRY_INTEGRATION_QT=ON
+          -D SENTRY_TRANSPORT=curl
+          -D SENTRY_TRANSPORT_COMPRESSION=ON
+          -D CRASHPAD_ENABLE_STACKTRACE=ON
+          -D CMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+
+      - name: Build
+        run: cmake --build sentry-native/build --parallel
+
+      - name: Install
+        run: cmake --install sentry-native/build --prefix sentry-native/install
+
+      - name: Verify version
+        run: strings sentry-native/install/lib/libsentry.so | grep -m1 "sentry.native/$SENTRY_NATIVE_VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sentry-native-linux
+          path: |
+            sentry-native/install/lib/libsentry.so
+            sentry-native/install/bin/crashpad_handler
