@@ -60,8 +60,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Install build deps
-        # libunwind-dev: CRASHPAD_ENABLE_STACKTRACE=ON requires libunwind-ptrace on Linux
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev zlib1g-dev libunwind-dev
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev zlib1g-dev
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -70,7 +69,11 @@ jobs:
           arch: linux_gcc_64
 
       # Flags mirror polydex-app/scripts/build_sentry.sh minus the macOS-only
-      # settings (OSX architectures, SDKROOT).
+      # settings (OSX architectures, SDKROOT) and CRASHPAD_ENABLE_STACKTRACE:
+      # on Linux that flag makes crashpad_handler depend on the system
+      # libunwind.so.8, which target machines may not have — a missing library
+      # would keep the handler from starting at all. The shipped Linux handler
+      # was always built without it; crash capture works fully without the flag.
       - name: Clone sentry-native
         run: git clone --branch "$SENTRY_NATIVE_VERSION" --depth 1 --recurse-submodules https://github.com/getsentry/sentry-native.git
 
@@ -82,7 +85,6 @@ jobs:
           -D SENTRY_INTEGRATION_QT=ON
           -D SENTRY_TRANSPORT=curl
           -D SENTRY_TRANSPORT_COMPRESSION=ON
-          -D CRASHPAD_ENABLE_STACKTRACE=ON
           -D CMAKE_PREFIX_PATH="$QT_ROOT_DIR"
 
       - name: Build
